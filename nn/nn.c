@@ -12,6 +12,7 @@ Mat mat_alloc(int rows, int cols) {
   Mat m;
   m.rows = rows;
   m.cols = cols;
+  m.stride = cols;
   m.es = (float *)malloc(sizeof(*m.es) * rows * cols);
   return m;
 }
@@ -19,14 +20,14 @@ Mat mat_alloc(int rows, int cols) {
 void mat_dot(Mat dst, Mat a, Mat b) {
   // helps in dot product of the matrix
   assert(a.cols == b.rows);
-  size_t n = a.cols;
+  int n = a.cols;
   assert(dst.rows == a.rows);
   assert(dst.cols == b.cols);
 
-  for (size_t i = 0; i < dst.rows; ++i) {
-    for (size_t j = 0; j < dst.cols; ++j) {
+  for (int i = 0; i < dst.rows; ++i) {
+    for (int j = 0; j < dst.cols; ++j) {
       MAT_AT(dst, i, j) = 0;
-      for (size_t k = 0; k < n; ++k) {
+      for (int k = 0; k < n; ++k) {
         MAT_AT(dst, i, j) += MAT_AT(a, i, k) * MAT_AT(b, k, j);
       }
     }
@@ -35,8 +36,8 @@ void mat_dot(Mat dst, Mat a, Mat b) {
 
 void mat_rand(Mat m) {
   // create the random matrix with random data
-  for (size_t i = 0; i < m.rows; ++i) {
-    for (size_t j = 0; j < m.cols; ++j) {
+  for (int i = 0; i < m.rows; ++i) {
+    for (int j = 0; j < m.cols; ++j) {
       MAT_AT(m, i, j) = rand_float();
     }
   }
@@ -44,8 +45,8 @@ void mat_rand(Mat m) {
 
 void mat_fill(Mat m, float x) {
   // fill the random given data to the matrix
-  for (size_t i = 0; i < m.rows; ++i) {
-    for (size_t j = 0; j < m.cols; ++j) {
+  for (int i = 0; i < m.rows; ++i) {
+    for (int j = 0; j < m.cols; ++j) {
       MAT_AT(m, i, j) = x;
     }
   }
@@ -54,17 +55,17 @@ void mat_fill(Mat m, float x) {
 void mat_sum(Mat dst, Mat a) {
   assert(dst.rows == a.rows);
   assert(dst.cols == a.cols);
-  for (size_t i = 0; i < dst.rows; ++i) {
-    for (size_t j = 0; j < dst.cols; ++j) {
+  for (int i = 0; i < dst.rows; ++i) {
+    for (int j = 0; j < dst.cols; ++j) {
       MAT_AT(dst, i, j) += MAT_AT(a, i, j);
     }
   }
 }
 
-void mat_print(Mat m, char *name) {
-  for (size_t i = 0; i < m.rows; ++i) {
-    for (size_t j = 0; j < m.cols; ++j) {
-      printf("%f ", MAT_AT(m, i, j));
+void mat_print(Mat m) {
+  for (int i = 0; i < m.rows; ++i) {
+    for (int j = 0; j < m.cols; ++j) {
+      printf("%f \t ", MAT_AT(m, i, j));
     }
     printf("\n");
   }
@@ -83,8 +84,8 @@ Mat mat_row(Mat m, int row) {
 void mat_copy(Mat dst, Mat src) {
   assert(dst.rows == src.rows);
   assert(dst.cols == src.cols);
-  for (size_t i = 0; i < dst.rows; ++i) {
-    for (size_t j = 0; j < dst.cols; ++j) {
+  for (int i = 0; i < dst.rows; ++i) {
+    for (int j = 0; j < dst.cols; ++j) {
       MAT_AT(dst, i, j) = MAT_AT(src, i, j);
     }
   }
@@ -100,13 +101,71 @@ void mat_sig(Mat m) {
   }
 }
 
-void neural_print(NN nn, const char *name) {
+void nn_zero(NN nn) {
+  int i;
+  for (i = 0; i < nn.count; i++) {
+    mat_fill(nn.ws[i], 0);
+    mat_fill(nn.bs[i], 0);
+    mat_fill(nn.as[i], 0);
+  }
+  mat_fill(nn.as[i + 1], 0);
+}
+// cs i - current sample
+// cl l - current layer
+// ca j - current activation
+// pa k - previous activation
+
+void nn_backprop(NN nn, NN g, Mat ti, Mat to) {
+  assert(ti.rows == to.rows);
+  int n = ti.rows;
+  nn_zero(g);
+  for (int i = 0; i < n; i++) {
+    mat_copy(NN_INPUT(nn), mat_row(ti, i));
+    nn_forward(nn);
+
+    for(int j=0;j<=nn.count;j++){
+      mat_fill(g.as[j],0);
+    }
+    for (int j = 0; j < to.cols; j++) {
+      MAT_AT(NN_OUTPUT(g), 0, j) =
+          MAT_AT(NN_OUTPUT(nn), 0, j) - MAT_AT(to, i, j);
+    }
+    for (int l = nn.count; l > 0; l--) {
+      for (int j = 0; j < nn.as[l].cols; j++) {
+        float a = MAT_AT(nn.as[l], 0, j);
+        float da = MAT_AT(g.as[l], 0, j);
+        MAT_AT(g.bs[l - 1], 0, j) += 2 * da * a * (1 - a);
+
+        for (int k = 0; k < nn.as[l - 1].cols; k++) {
+          float pa = MAT_AT(nn.as[l - 1], 0, k);
+          float w = MAT_AT(nn.ws[l - 1], k, j);
+          MAT_AT(g.ws[l - 1], k, j) += 2 * da * a * (1 - a) * pa;
+          MAT_AT(g.as[l - 1], 0, k) += 2 * da * a * (1 - a) * w;
+        }
+      }
+    }
+  }
+  for (int i = 0; i < g.count; i++) {
+    for (int j = 0; j < g.ws[i].rows; j++) {
+      for (int k = 0; k < g.ws[i].cols; k++) {
+        MAT_AT(g.ws[i], j, k) /= n;
+      }
+    }
+    for (int j = 0; j < g.bs[i].rows; j++) {
+      for (int k = 0; k < g.bs[i].cols; k++) {
+        MAT_AT(g.bs[i], j, k) /= n;
+      }
+    }
+  }
+}
+
+void neural_print(NN nn) {
   printf("Printing the neural network\n");
   for (int i = 0; i < nn.count; i++) {
-    printf("ws[%d]=[ ", i);
+    printf("ws[%d]=[\n", i);
     MAT_PRINT(nn.ws[i]);
     printf("]\n");
-    printf("bs[%d]=[ ", i);
+    printf("bs[%d]=[\n", i);
     MAT_PRINT(nn.bs[i]);
     printf("]\n");
   }
@@ -144,7 +203,6 @@ NN nn_alloc(int *arch, int count) {
   return nn;
 }
 
-
 float nn_cost(NN nn, Mat ti, Mat to) {
   assert(ti.rows == to.rows);
   assert(to.cols == NN_OUTPUT(nn).cols);
@@ -166,38 +224,72 @@ float nn_cost(NN nn, Mat ti, Mat to) {
 }
 void nn_finite_diff(NN nn, NN g, float eps, Mat ti, Mat to) {
   float saved;
-  float c = nn_cost(nn,ti,to);
-  for(int i=0;i<nn.count;i++){
-    for(int j=0;j<nn.ws[i].rows;j++){
-      for(int k=0;k<nn.ws[i].cols; k++){
-        saved = MAT_AT(nn.ws[i],j,k);
-        MAT_AT(nn.ws[i],j,k) += eps;
-        MAT_AT(g.ws[i],j,k)=(nn_cost(nn,ti,to) - c)/eps;
-        MAT_AT(nn.ws[i],j,k)= saved;
+  float c = nn_cost(nn, ti, to);
+  for (int i = 0; i < nn.count; i++) {
+    for (int j = 0; j < nn.ws[i].rows; j++) {
+      for (int k = 0; k < nn.ws[i].cols; k++) {
+        saved = MAT_AT(nn.ws[i], j, k);
+        MAT_AT(nn.ws[i], j, k) += eps;
+        MAT_AT(g.ws[i], j, k) = (nn_cost(nn, ti, to) - c) / eps;
+        MAT_AT(nn.ws[i], j, k) = saved;
       }
     }
-    for(int j=0;j<nn.bs[i].rows;j++){
-      for(int k=0;k<nn.bs[i].cols; k++){
-        saved = MAT_AT(nn.bs[i],j,k);
-        MAT_AT(nn.bs[i],j,k) += eps;
-        MAT_AT(g.bs[i],j,k)=(nn_cost(nn,ti,to) - c)/eps;
-        MAT_AT(nn.bs[i],j,k)= saved;
+    for (int j = 0; j < nn.bs[i].rows; j++) {
+      for (int k = 0; k < nn.bs[i].cols; k++) {
+        saved = MAT_AT(nn.bs[i], j, k);
+        MAT_AT(nn.bs[i], j, k) += eps;
+        MAT_AT(g.bs[i], j, k) = (nn_cost(nn, ti, to) - c) / eps;
+        MAT_AT(nn.bs[i], j, k) = saved;
       }
     }
   }
 }
-void nn_learn(NN nn, NN g , float rate){
-  for(int i=0;i<nn.count;i++){
-    for(int j=0;j<nn.ws[i].rows;j++){
-      for(int k=0;k<nn.ws[i].cols;k++){
-        MAT_AT(nn.ws[i],j,k)-= rate * MAT_AT(g.ws[i],j,k);
+void nn_learn(NN nn, NN g, float rate) {
+  for (int i = 0; i < nn.count; i++) {
+    for (int j = 0; j < nn.ws[i].rows; j++) {
+      for (int k = 0; k < nn.ws[i].cols; k++) {
+        MAT_AT(nn.ws[i], j, k) -= rate * MAT_AT(g.ws[i], j, k);
       }
     }
 
-    for(int j=0;j<nn.bs[i].rows;j++){
-      for(int k=0;k<nn.bs[i].cols;k++){
-        MAT_AT(nn.bs[i],j,k)-= rate * MAT_AT(g.bs[i],j,k);
+    for (int j = 0; j < nn.bs[i].rows; j++) {
+      for (int k = 0; k < nn.bs[i].cols; k++) {
+        MAT_AT(nn.bs[i], j, k) -= rate * MAT_AT(g.bs[i], j, k);
       }
     }
   }
+}
+
+void mat_save(FILE *out,Mat m){
+  const char *magic="nn.h.mat";
+  fwrite(magic, strlen(magic), 1, out);
+    fwrite(&m.rows, sizeof(m.rows), 1, out);
+    fwrite(&m.cols, sizeof(m.cols), 1, out);
+    for (int i = 0; i < m.rows; ++i) {
+        int n = fwrite(&MAT_AT(m, i, 0), sizeof(*m.es), m.cols, out);
+        while (n < m.cols && !ferror(out)) {
+            int k = fwrite(m.es + n, sizeof(*m.es), m.cols - n, out);
+            n += k;
+        }
+    }
+}
+
+
+Mat mat_load(FILE *in)
+{
+    uint64_t magic;
+    fread(&magic, sizeof(magic), 1, in);
+    assert(magic == 0x74616d2e682e6e6e);
+    int rows, cols;
+    fread(&rows, sizeof(rows), 1, in);
+    fread(&cols, sizeof(cols), 1, in);
+    Mat m = mat_alloc(rows, cols);
+
+    int n = fread(m.es, sizeof(*m.es), rows*cols, in);
+    while (n < rows*cols && !ferror(in)) {
+        int k = fread(m.es, sizeof(*m.es) + n, rows*cols - n, in);
+        n += k;
+    }
+
+    return m;
 }
